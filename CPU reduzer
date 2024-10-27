@@ -1,0 +1,44 @@
+repeat task.wait() until game:IsLoaded()
+
+local ws, rs, lighting = game:GetService("Workspace"), game:GetService("ReplicatedStorage"), game:GetService("Lighting")
+local terrain = ws:WaitForChild("Terrain")
+
+-- Terrain & Lighting Einstellungen
+terrain.WaterReflectance, terrain.WaterTransparency, terrain.WaterWaveSize, terrain.WaterWaveSpeed = 0, 1, 0, 0
+lighting.Brightness, lighting.GlobalShadows, lighting.FogEnd, lighting.FogStart = 0, false, 9e100, 0
+
+-- Sichere Property-Änderungen
+pcall(function()
+	sethiddenproperty(lighting, "Technology", 2)
+	sethiddenproperty(terrain, "Decoration", false)
+end)
+
+-- Löschbare Objekte und Aktionen für bestimmte Klassen
+local deleteKeywords = {"Tree", "Water", "Bush", "grass", "PARTS_LOD"}
+local actions = {
+	BasePart = function(v) v.Material, v.Reflectance = Enum.Material.Plastic, 0 end,
+	Decal = function(v) v.Transparency = 1 end,
+	ParticleEmitter = function(v) v.Lifetime = NumberRange.new(0) end,
+	Fire = function(v) v.Enabled = false end,
+	MeshPart = function(v) v.Material, v.Reflectance, v.TextureID, v.MeshId = Enum.Material.Plastic, 0, "", "" end,
+	SpecialMesh = function(v) v.Scale = Vector3.new(0.1,0.1,0.1); v.MeshId, v.TextureId = "", "" end
+}
+
+-- Funktion zum Bereinigen von Objekten
+local function clearTextures(v)
+	if actions[v.ClassName] then
+		actions[v.ClassName](v)
+	elseif table.find(deleteKeywords, v.Name) then
+		v:Destroy()
+	end
+end
+
+-- Beleuchtung und Descendants bereinigen
+lighting:ClearAllChildren()
+for _, service in ipairs({ws, rs}) do
+	for _, v in ipairs(service:GetDescendants()) do
+		clearTextures(v)
+	end
+	service.DescendantAdded:Connect(clearTextures)
+end
+
