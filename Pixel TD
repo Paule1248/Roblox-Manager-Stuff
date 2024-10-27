@@ -1,0 +1,300 @@
+
+-- Service-Variablen
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local LeaderStats = LocalPlayer:FindFirstChild("leaderstats")
+
+-- Lobby und Spiel IDs
+local LobbyPlaceId = 15939808257
+local GamePlaceId = 15939811130
+
+-- Fehlerbehandlungsfunktion mit vollständigem Stack-Trace und Script-Abbruch
+local function handleError(errMessage)
+    local errorMessageWithTraceback = "Ein Fehler ist aufgetreten:\n" .. debug.traceback(errMessage, 2)
+    warn(errorMessageWithTraceback)  -- Ausgabe der detaillierten Fehlermeldung für Debugging
+    
+    -- Kopiert Fehlermeldung ins Clipboard, falls verfügbar
+    if setclipboard then
+        setclipboard(errorMessageWithTraceback)
+        print("Fehlermeldung wurde ins Clipboard kopiert.")
+    else
+        warn("Clipboard-Funktion nicht verfügbar.")
+    end
+
+    -- Erzwingt den Script-Abbruch
+    error(errorMessageWithTraceback, 0)
+end
+
+-- Funktion zur Konvertierung einer Position aus einem String in ein Vector3 oder direkten Vector3-Wert
+local function StringToVector3(positionInput)
+    print("StringToVector3: Position input received:", positionInput) -- Debugging
+
+    if typeof(positionInput) == "string" then
+        local x, y, z = positionInput:match("([^,]+),%s*([^,]+),%s*([^,]+)")
+        if x and y and z then
+            print("Converted position:", Vector3.new(tonumber(x), tonumber(y), tonumber(z))) -- Debugging
+            return Vector3.new(tonumber(x), tonumber(y), tonumber(z))
+        else
+            error("Ungültiges Format für positionString: " .. positionInput)
+        end
+    elseif typeof(positionInput) == "Vector3" then
+        return positionInput
+    else
+        error("positionInput ist weder ein gültiger String noch ein Vector3: " .. tostring(positionInput))
+    end
+end
+
+-- Funktion zur Teleportation des Spielers mit Fehlerüberwachung
+local function GetHumanoid()
+    local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+    return Character:WaitForChild("Humanoid"), Character:WaitForChild("HumanoidRootPart")
+end
+
+-- Funktion zur Teleportation des Spielers mit Fehlerüberwachung
+local function teleportPlayer(position)
+    print("teleportPlayer: Teleporting to position:", position) -- Debugging
+
+    local success, errorMsg = pcall(function()
+        local _, HumanoidRootPart = GetHumanoid()
+        if HumanoidRootPart then
+            HumanoidRootPart.CFrame = CFrame.new(position)
+            print("teleportPlayer: Teleported successfully") -- Debugging
+        else
+            error("HumanoidRootPart konnte nicht gefunden werden.")
+        end
+    end)
+
+    if not success then
+        handleError(errorMsg)
+    end
+end
+
+-- Funktion zur Aktualisierung von Werten
+local Money, Game, Map
+local function UpdateValues()
+    if LeaderStats then
+        Money = LeaderStats:FindFirstChild("Money") and LeaderStats.Money.Value or 0
+    end
+end
+
+-- Funktion zur Auflistung aller Einheiten des Spielers
+local function GetAllUnits()
+    local Units = {}
+    if Map then
+        local PlacedUnits = Map:FindFirstChild("PlacedUnits")
+        if PlacedUnits then
+            for _, Unit in ipairs(PlacedUnits:GetChildren()) do
+                if Unit:GetAttribute("Owner") == LocalPlayer.Name then
+                    table.insert(Units, {Unit = Unit, Level = Unit:GetAttribute("Level")})
+                    print("Einheit: "..Unit.Name.." Level: "..tostring(Unit:GetAttribute("Level")))
+                end
+            end
+        end
+    end
+    return Units
+end
+
+-- Funktion zum Platzieren einer Einheit mit zusätzlicher Fehlerüberwachung
+local function PlaceUnit(UnitName, Position)
+    print("PlaceUnit: Attempting to place unit:", UnitName, "at position:", Position) -- Debugging
+
+    local success, errorMsg = pcall(function()
+        local posCFrame = CFrame.new(StringToVector3(Position))
+        ReplicatedStorage.Packages._Index["sleitnick_knit@1.7.0"].knit.Services.UnitService.RF.PlaceUnit:InvokeServer(UnitName, posCFrame)
+        print("PlaceUnit: Successfully placed unit:", UnitName, "at position:", Position) -- Debugging
+    end)
+
+    if not success then
+        warn("Fehler beim Platzieren der Einheit: " .. UnitName .. " - " .. errorMsg)
+        handleError("Fehler beim Platzieren der Einheit: " .. UnitName .. " - " .. errorMsg)
+    end
+
+    task.wait(0.5) -- Wartezeit zur Vermeidung von Platzierungsproblemen
+end
+
+-- Funktion zum Aufrüsten einer Einheit
+local function UpgradeUnit(Unit, TargetLevel)
+    print("UpgradeUnit: Upgrading unit:", Unit.Name, "to target level:", TargetLevel) -- Debugging
+
+    while Unit:GetAttribute("Level") < TargetLevel do
+        ReplicatedStorage.Packages._Index["sleitnick_knit@1.7.0"].knit.Services.UnitService.RF.UpgradeUnit:InvokeServer(Unit)
+        print("UpgradeUnit: Upgraded unit:", Unit.Name, "current level:", Unit:GetAttribute("Level")) -- Debugging
+        task.wait(1) -- Wartezeit zur Vermeidung von Spam
+    end
+end
+local function PlaceUnitsFromConfig()
+    print("PlaceUnitsFromConfig: Starting unit placement and upgrade from config.") -- Debugging
+
+    local success, errorMsg = pcall(function()
+        local UnitConfigs = getgenv().UnitSettings.Units
+        local SortedUnits = {}
+
+        -- Sortiere Einheiten nach Priorität
+        for unitName, config in pairs(UnitConfigs) do
+            table.insert(SortedUnits, {name = unitName, config = config})
+        end
+        table.sort(SortedUnits, function(a, b) return a.config.Priority < b.config.Priority end)
+
+        -- **Schritt 1**: Platziere alle Einheiten
+        for _, unitData in ipairs(SortedUnits) do
+            local unitName = unitData.name
+            local config = unitData.config
+            local basePosition = StringToVector3(config.Position)
+
+            for i = 1, config.Amount do
+                local positionOffset = Vector3.new(i * 1.5, 0, i * 1.5)
+                local adjustedPosition = basePosition + positionOffset
+
+                print("Placing unit:", unitName, "at adjusted position:", adjustedPosition) -- Debugging
+                PlaceUnit(unitName, adjustedPosition)
+            end
+        end
+
+        -- **Schritt 2**: Rüste alle platzierten Einheiten auf
+        for _, unitData in ipairs(SortedUnits) do
+            local unitName = unitData.name
+            local config = unitData.config
+
+            if config["Upgrade Settings"].Upgrade then
+                local placedUnits = GetAllUnits()
+                for _, unitInfo in ipairs(placedUnits) do
+                    if unitInfo.Unit.Name == unitName and unitInfo.Level < config["Upgrade Settings"]["Upgrade To Level"] then
+                        print("Upgrading unit:", unitName, "to level:", config["Upgrade Settings"]["Upgrade To Level"]) -- Debugging
+                        UpgradeUnit(unitInfo.Unit, config["Upgrade Settings"]["Upgrade To Level"])
+                    end
+                end
+            end
+        end
+    end)
+
+    if not success then
+        handleError(errorMsg)
+    end
+end
+
+local function EnableSettings()
+    local SpeedValueLabel = game:GetService("Players").LocalPlayer.PlayerGui.MainUI.SpeedVote
+
+    -- Repeat until SpeedVote is enabled
+    repeat
+        game:GetService("ReplicatedStorage").Packages._Index["sleitnick_knit@1.7.0"].knit.Services.WaveService.RF.SpeedUp:InvokeServer()
+        task.wait(0.2)
+        SpeedValue = SpeedValueLabel.Value.Text  -- Update SpeedValue each iteration
+    until SpeedValue == "[ENABLED]"
+
+    print("EnableSettings: Speed setting is enabled.") -- Debugging
+
+    -- Access AutoSkipText dynamically inside the loop
+    local AutoSkipLabel = game:GetService("Players").LocalPlayer.PlayerGui.MainUI.GameInfo.AutoSkip.TextLabel
+
+    -- Repeat until AutoSkipText indicates it's enabled
+    repeat
+        game:GetService("ReplicatedStorage").Packages._Index["sleitnick_knit@1.7.0"].knit.Services.WaveService.RF.AutoSkip:InvokeServer()
+        task.wait(0.2)
+        AutoSkipText = AutoSkipLabel.Text  -- Update AutoSkipText each iteration
+    until AutoSkipText == "Auto Skip [ON]"
+
+    print("EnableSettings: Auto-skip setting is enabled.") -- Debugging
+end
+
+
+-- Funktion zur Handhabung der Lobby
+local function LobbyHandle()
+    local Lobby = Workspace:FindFirstChild("Lobby")
+    if Lobby then
+        local JoinPads = Lobby:FindFirstChild("JoinPads")
+        if JoinPads then
+            local Elevators = JoinPads:FindFirstChild("Elevators")
+            if Elevators then
+                local mapSetting = getgenv().Settings["Level Settings"]["Map"]
+                local Map = Elevators:FindFirstChild(mapSetting)
+                local RandomNumber = math.random(1, 3)
+                local MapToJoin = mapSetting.."-"..RandomNumber
+                print("Beitritt zu: "..MapToJoin)
+
+                local PadToTp = Map and Map:FindFirstChild(tostring(RandomNumber))
+                if PadToTp then
+                    teleportPlayer(PadToTp.Position)
+                    task.wait(0.3)
+                    ReplicatedStorage.Packages._Index["sleitnick_knit@1.7.0"].knit.Services.ElevatorService.RF.Start:InvokeServer(MapToJoin)
+                else
+                    warn("Teleport-Pad konnte nicht gefunden werden.")
+                end
+            end
+        end
+    end
+end
+-- Function to handle in-game processes
+local function GameHandle()
+    print("GameHandle: Attempting to locate 'Game' and 'Map' in Workspace...") -- Debugging
+
+    Game = Workspace:FindFirstChild("Game")
+    Map = Game and Game:FindFirstChild("Map")
+    
+    if not Game or not Map then
+        warn("GameHandle: Could not locate 'Game' or 'Map' in Workspace. Exiting function.")
+        return
+    else
+        print("GameHandle: 'Game' and 'Map' located successfully.") -- Debugging
+    end
+
+    UpdateValues()
+    print("GameHandle: Player values updated (Money, Game, Map)") -- Debugging
+
+    -- Voting for game difficulty
+    local difficulty = getgenv().Settings["Level Settings"]["Difficulty"]
+    print("GameHandle: Voting for difficulty level:", difficulty) -- Debugging
+    ReplicatedStorage.Packages._Index["sleitnick_knit@1.7.0"].knit.Services.VotingService.RF.Vote:InvokeServer(difficulty)
+    
+    task.wait(1)
+
+    -- Starting the game
+    print("GameHandle: Starting the game with selected settings.") -- Debugging
+    task.spawn(function()
+        ReplicatedStorage.Packages._Index["sleitnick_knit@1.7.0"].knit.Services.VotingService.RF.Start:InvokeServer()
+    end)
+
+    -- Countdown from 10 to 1
+    for i = 1, 5 do
+        print("GameHandle: Starting game in " .. (6 - i) .. " seconds.")
+        task.wait(1)
+    end
+    EnableSettings()
+    task.wait()
+    -- Main game loop to place units
+    while not game:GetService("Players").LocalPlayer.PlayerGui.MainUI.Frames.Results.Visible do
+        print("GameHandle: Placing units as per configuration...") -- Debugging
+        PlaceUnitsFromConfig()
+        print("GameHandle: Units placed. Starting countdown for 10 seconds before the next placement.") -- Debugging
+    end
+
+    -- Rejoining after game completion
+    local mapSetting = getgenv().Settings["Level Settings"]["Map"]
+    print("GameHandle: Game ended. Rejoining map:", mapSetting .. "-3 in repeat mode.") -- Debugging
+    ReplicatedStorage.Packages._Index["sleitnick_knit@1.7.0"].knit.Services.ElevatorService.RF.Join:InvokeServer(mapSetting.."-3", mapSetting, "Repeat")
+end
+
+
+-- Hauptfunktion mit Fehlerüberwachung und Script-Abbruch
+local function main()
+    print("Main function started") -- Debugging
+
+    local success, errorMsg = pcall(function()
+        if game.PlaceId == LobbyPlaceId then
+            print("Entering lobby handle") -- Debugging
+            LobbyHandle()
+        elseif game.PlaceId == GamePlaceId then
+            print("Entering game handle") -- Debugging
+            GameHandle()
+        else
+            error("Nicht unterstütztes Spiel")
+        end
+    end)
+
+    if not success then
+        handleError(errorMsg)
+    end
+end
+main()
